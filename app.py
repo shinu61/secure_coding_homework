@@ -11,6 +11,8 @@ from flask import (
 )
 from flask_socketio import SocketIO, emit, join_room
 from flask_wtf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # --------------------------------------------------------------------------
@@ -32,12 +34,29 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 csrf = CSRFProtect(app)  # [checklist: CSRF 보호] 모든 POST 폼에 자동 적용
 socketio = SocketIO(app)
 
+# [checklist: 엔드포인트 속도 제한] Flask-Limiter로 IP 기준 요청 속도 제한.
+# RATELIMIT_ENABLED=false 로 두면 자동화 테스트/개발 시 제한을 끌 수 있음(기본 true).
+app.config['RATELIMIT_ENABLED'] = os.environ.get('RATELIMIT_ENABLED', 'true').lower() == 'true'
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=[],           # 전역 기본 제한 없음. 민감 엔드포인트에만 개별 적용
+    storage_uri='memory://',     # 개발용 인메모리 저장소(운영은 Redis 등 권장 - README 참고)
+)
+
 # 로그인 실패 방어 설정 [checklist: 실패 로그인 방어]
 MAX_FAILED_ATTEMPTS = 5
 LOCK_MINUTES = 5
 
 # 신고 남용 방지 설정 [checklist: 신고 남용 방지]
-REPORT_THRESHOLD = 3  # 이 횟수 이상 신고되면 자동 차단/휴면 처리
+# 즉시 자동 차단하지 않고, 가중 신고 점수가 임계치 이상이면 '관리자 검토 큐(flagged)'에만 올림.
+# 최종 차단/휴면은 관리자 승인에서만 확정 -> 소수 계정 담합(Sybil)으로 정상 대상을 즉시
+# 차단시키는 공격을 완화.
+REPORT_THRESHOLD = 3.0  # 이 가중 점수 이상이면 관리자 검토 큐에 등록
+# 신고자 계정 나이 가중치: 갓 만든 계정의 신고 영향력을 낮춤 [checklist: 신고 남용 방지]
+REPORTER_TRUST_AGE_SECONDS = int(os.environ.get('REPORTER_TRUST_AGE_SECONDS', 24 * 3600))
+NEW_ACCOUNT_WEIGHT = 0.5   # 가입 후 REPORTER_TRUST_AGE_SECONDS 미만 계정의 신고 가중치
+TRUSTED_ACCOUNT_WEIGHT = 1.0  # 그 이상 경과한 계정의 신고 가중치
 
 # 송금 상한 [checklist: 폼 입력 검증] 비정상적으로 큰 값/정수 오버플로 방지
 MAX_TRANSFER_AMOUNT = 100_000_000
@@ -69,6 +88,12 @@ def close_connection(exception):
         db.close()
 
 
+def _add_column_if_missing(db, table, column, coldef):
+    cols = [r['name'] for r in db.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in cols:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
+
+
 def init_db():
     with app.app_context():
         db = get_db()
@@ -84,6 +109,7 @@ def init_db():
                 balance INTEGER NOT NULL DEFAULT 1000000, -- 송금용 가상 잔액
                 failed_attempts INTEGER NOT NULL DEFAULT 0,
                 locked_until TEXT,
+                flagged INTEGER NOT NULL DEFAULT 0,        -- 1이면 신고 누적으로 관리자 검토 대기
                 created_at TEXT NOT NULL
             )
         """)
@@ -96,6 +122,7 @@ def init_db():
                 seller_id TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',  -- 'active' | 'blocked' | 'sold'
                 report_count INTEGER NOT NULL DEFAULT 0,
+                flagged INTEGER NOT NULL DEFAULT 0,     -- 1이면 신고 누적으로 관리자 검토 대기
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (seller_id) REFERENCES user (id)
             )
@@ -132,6 +159,11 @@ def init_db():
         """)
         db.commit()
 
+        # 기존 DB 호환: flagged 컬럼이 없으면 추가 (신규 신고 검토 큐 기능)
+        _add_column_if_missing(db, 'product', 'flagged', 'INTEGER NOT NULL DEFAULT 0')
+        _add_column_if_missing(db, 'user', 'flagged', 'INTEGER NOT NULL DEFAULT 0')
+        db.commit()
+
         # 최초 실행 시 관리자 계정 자동 생성 [요구사항: 관리자가 플랫폼의 모든 요소를 관리]
         cur.execute("SELECT * FROM user WHERE username = ?", ('admin',))
         if cur.fetchone() is None:
@@ -152,6 +184,35 @@ def utcnow():
 
 def now():
     return utcnow().isoformat()
+
+
+def _parse_dt(iso_str):
+    """ISO 문자열 -> tz-aware datetime (구버전 naive 값도 UTC로 보정)."""
+    dt = datetime.fromisoformat(iso_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def reporter_weight(created_at_iso):
+    """신고자 계정 나이에 따른 신고 가중치. [checklist: 신고 남용 방지]
+    갓 만든 계정(가입 후 REPORTER_TRUST_AGE_SECONDS 미만)의 신고 영향력을 낮춰
+    소수의 신규 가짜 계정 담합(Sybil)으로 정상 대상을 검토 큐에 올리기 어렵게 함."""
+    try:
+        age = (utcnow() - _parse_dt(created_at_iso)).total_seconds()
+    except (ValueError, TypeError):
+        age = 0
+    return TRUSTED_ACCOUNT_WEIGHT if age >= REPORTER_TRUST_AGE_SECONDS else NEW_ACCOUNT_WEIGHT
+
+
+def weighted_report_score(db, target_type, target_id):
+    """대상에 대한 '미처리(open)' 신고들의 가중 합산 점수."""
+    rows = db.execute(
+        "SELECT u.created_at FROM report r JOIN user u ON u.id = r.reporter_id "
+        "WHERE r.target_type = ? AND r.target_id = ? AND r.status = 'open'",
+        (target_type, target_id)
+    ).fetchall()
+    return sum(reporter_weight(r['created_at']) for r in rows)
 
 
 # --------------------------------------------------------------------------
@@ -217,6 +278,15 @@ def forbidden(e):
     return render_template('error.html', code=403, message='접근 권한이 없습니다.'), 403
 
 
+# [checklist: 엔드포인트 속도 제한] 한도 초과 시 사용자 친화적 429 응답
+@app.errorhandler(429)
+def ratelimit_exceeded(e):
+    return render_template(
+        'error.html', code=429,
+        message='요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.'
+    ), 429
+
+
 @app.errorhandler(404)
 def not_found(e):
     return render_template('error.html', code=404, message='페이지를 찾을 수 없습니다.'), 404
@@ -242,6 +312,7 @@ def index():
 # 회원가입 / 로그인 / 로그아웃
 # --------------------------------------------------------------------------
 @app.route('/register', methods=['GET', 'POST'])
+@limiter.limit('10 per minute', methods=['POST'])  # [checklist: 엔드포인트 속도 제한]
 def register():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
@@ -275,6 +346,8 @@ def register():
 
 
 @app.route('/login', methods=['GET', 'POST'])
+# [checklist: 엔드포인트 속도 제한] IP 기준 로그인 속도 제한 (계정별 5회 실패 잠금과 별개로 동작)
+@limiter.limit('10 per minute', methods=['POST'])
 def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
@@ -522,9 +595,11 @@ def delete_product(product_id):
 # --------------------------------------------------------------------------
 @app.route('/report', methods=['GET', 'POST'])
 @login_required
+@limiter.limit('20 per minute', methods=['POST'])  # [checklist: 엔드포인트 속도 제한]
 def report():
     db = get_db()
     if request.method == 'POST':
+        reporter_id = session['user_id']
         target_type = request.form.get('target_type', '')
         target_id = request.form.get('target_id', '').strip()
         reason = request.form.get('reason', '').strip()
@@ -545,12 +620,21 @@ def report():
             flash('신고 대상을 찾을 수 없습니다.')
             return redirect(url_for('report'))
 
+        # [checklist: 신고 남용 방지] 자기 자신 신고 차단
+        # (사용자: 본인 계정 / 상품: 본인이 등록한 상품)
+        if target_type == 'user' and target['id'] == reporter_id:
+            flash('본인 계정은 신고할 수 없습니다.')
+            return redirect(url_for('report'))
+        if target_type == 'product' and target['seller_id'] == reporter_id:
+            flash('본인이 등록한 상품은 신고할 수 없습니다.')
+            return redirect(url_for('report'))
+
         try:
             # UNIQUE(reporter_id, target_type, target_id) 제약으로 중복신고 방지 [checklist: 신고 남용 방지]
             db.execute(
                 "INSERT INTO report (id, reporter_id, target_type, target_id, reason, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), session['user_id'], target_type, target_id, reason, now())
+                (str(uuid.uuid4()), reporter_id, target_type, target_id, reason, now())
             )
         except sqlite3.IntegrityError:
             flash('이미 해당 대상을 신고했습니다.')
@@ -560,19 +644,27 @@ def report():
             db.execute(
                 "UPDATE product SET report_count = report_count + 1 WHERE id = ?", (target_id,)
             )
-            new_count = target['report_count'] + 1
-            if new_count >= REPORT_THRESHOLD:
-                db.execute("UPDATE product SET status = 'blocked' WHERE id = ?", (target_id,))
-        else:
-            open_reports = db.execute(
-                "SELECT COUNT(*) c FROM report WHERE target_type='user' AND target_id=?",
-                (target_id,)
-            ).fetchone()['c']
-            if open_reports >= REPORT_THRESHOLD:
-                db.execute("UPDATE user SET status = 'suspended' WHERE id = ?", (target_id,))
+
+        # [checklist: 신고 남용 방지 - Sybil 완화]
+        # 즉시 자동 차단/휴면하지 않는다. 신고자 계정 나이로 가중한 점수가 임계치 이상이면
+        # '관리자 검토 큐(flagged=1)'에만 올리고, 최종 차단/휴면은 관리자 승인에서 확정한다.
+        # 이렇게 하면 소수의 신규 가짜 계정 담합만으로는 정상 대상을 차단시킬 수 없다.
+        score = weighted_report_score(db, target_type, target_id)
+        if score >= REPORT_THRESHOLD:
+            if target_type == 'product':
+                # 아직 정상(active)인 상품만 검토 큐로. 이미 차단된 건 건드리지 않음.
+                db.execute(
+                    "UPDATE product SET flagged = 1 WHERE id = ? AND status = 'active'",
+                    (target_id,)
+                )
+            else:
+                db.execute(
+                    "UPDATE user SET flagged = 1 WHERE id = ? AND status = 'active' AND role != 'admin'",
+                    (target_id,)
+                )
 
         db.commit()
-        flash('신고가 접수되었습니다.')
+        flash('신고가 접수되었습니다. 관리자 검토 후 조치됩니다.')
         return redirect(url_for('dashboard'))
     return render_template('report.html')
 
@@ -582,6 +674,7 @@ def report():
 # --------------------------------------------------------------------------
 @app.route('/transfer', methods=['GET', 'POST'])
 @login_required
+@limiter.limit('30 per minute', methods=['POST'])  # [checklist: 엔드포인트 속도 제한]
 def transfer():
     user = current_user()
     db = get_db()
@@ -763,6 +856,30 @@ def handle_send_message_event(data):
 # --------------------------------------------------------------------------
 # 관리자 페이지
 # --------------------------------------------------------------------------
+def _gather_open_reports(db, target_type, target_id):
+    """검토 큐 표시용: 대상에 대한 미처리 신고자 목록과 각 신고자의 계정 나이/가중치."""
+    rows = db.execute(
+        "SELECT r.reason, u.username, u.created_at AS uc "
+        "FROM report r JOIN user u ON u.id = r.reporter_id "
+        "WHERE r.target_type = ? AND r.target_id = ? AND r.status = 'open' "
+        "ORDER BY r.created_at",
+        (target_type, target_id)
+    ).fetchall()
+    items = []
+    for r in rows:
+        try:
+            age_days = (utcnow() - _parse_dt(r['uc'])).total_seconds() / 86400
+        except (ValueError, TypeError):
+            age_days = 0
+        items.append({
+            'username': r['username'],
+            'reason': r['reason'],
+            'age_days': age_days,
+            'weight': reporter_weight(r['uc']),
+        })
+    return items
+
+
 @app.route('/admin')
 @admin_required
 def admin_dashboard():
@@ -772,14 +889,47 @@ def admin_dashboard():
     reports = db.execute(
         "SELECT * FROM report WHERE status = 'open' ORDER BY created_at DESC"
     ).fetchall()
-    return render_template('admin.html', users=users, products=products, reports=reports)
+
+    # [checklist: 신고 남용 방지 - Sybil 완화] 관리자 검토 큐:
+    # 신고 누적으로 flagged 되었으나 아직 차단/휴면되지 않은(정상 상태) 대상들.
+    # 관리자가 여기서 승인해야 실제 차단/휴면이 확정된다.
+    flagged_products = db.execute(
+        "SELECT * FROM product WHERE flagged = 1 AND status = 'active' ORDER BY created_at DESC"
+    ).fetchall()
+    flagged_users = db.execute(
+        "SELECT * FROM user WHERE flagged = 1 AND status = 'active' AND role != 'admin' "
+        "ORDER BY created_at DESC"
+    ).fetchall()
+    review_products = [
+        {'p': p,
+         'score': weighted_report_score(db, 'product', p['id']),
+         'reports': _gather_open_reports(db, 'product', p['id'])}
+        for p in flagged_products
+    ]
+    review_users = [
+        {'u': u,
+         'score': weighted_report_score(db, 'user', u['id']),
+         'reports': _gather_open_reports(db, 'user', u['id'])}
+        for u in flagged_users
+    ]
+    return render_template(
+        'admin.html', users=users, products=products, reports=reports,
+        review_products=review_products, review_users=review_users,
+        report_threshold=REPORT_THRESHOLD
+    )
 
 
 @app.route('/admin/user/<user_id>/suspend', methods=['POST'])
 @admin_required
 def admin_suspend_user(user_id):
+    # [checklist: 신고 남용 방지] 관리자 승인 -> 휴면 확정 + 검토 큐에서 제거 + 관련 신고 처리완료
     db = get_db()
-    db.execute("UPDATE user SET status = 'suspended' WHERE id = ?", (user_id,))
+    db.execute("UPDATE user SET status = 'suspended', flagged = 0 WHERE id = ?", (user_id,))
+    db.execute(
+        "UPDATE report SET status = 'resolved' WHERE target_type = 'user' AND target_id = ? "
+        "AND status = 'open'",
+        (user_id,)
+    )
     db.commit()
     flash('사용자를 휴면 처리했습니다.')
     return redirect(url_for('admin_dashboard'))
@@ -790,7 +940,8 @@ def admin_suspend_user(user_id):
 def admin_unsuspend_user(user_id):
     db = get_db()
     db.execute(
-        "UPDATE user SET status = 'active', failed_attempts = 0, locked_until = NULL WHERE id = ?",
+        "UPDATE user SET status = 'active', flagged = 0, failed_attempts = 0, "
+        "locked_until = NULL WHERE id = ?",
         (user_id,)
     )
     db.commit()
@@ -798,11 +949,33 @@ def admin_unsuspend_user(user_id):
     return redirect(url_for('admin_dashboard'))
 
 
+@app.route('/admin/user/<user_id>/dismiss', methods=['POST'])
+@admin_required
+def admin_dismiss_user_reports(user_id):
+    # [checklist: 신고 남용 방지] 관리자 반려 -> 차단하지 않고 검토 큐에서 제거, 신고 처리완료
+    db = get_db()
+    db.execute("UPDATE user SET flagged = 0 WHERE id = ?", (user_id,))
+    db.execute(
+        "UPDATE report SET status = 'resolved' WHERE target_type = 'user' AND target_id = ? "
+        "AND status = 'open'",
+        (user_id,)
+    )
+    db.commit()
+    flash('해당 사용자에 대한 신고를 반려했습니다.')
+    return redirect(url_for('admin_dashboard'))
+
+
 @app.route('/admin/product/<product_id>/block', methods=['POST'])
 @admin_required
 def admin_block_product(product_id):
+    # [checklist: 신고 남용 방지] 관리자 승인 -> 차단 확정 + 검토 큐에서 제거 + 관련 신고 처리완료
     db = get_db()
-    db.execute("UPDATE product SET status = 'blocked' WHERE id = ?", (product_id,))
+    db.execute("UPDATE product SET status = 'blocked', flagged = 0 WHERE id = ?", (product_id,))
+    db.execute(
+        "UPDATE report SET status = 'resolved' WHERE target_type = 'product' AND target_id = ? "
+        "AND status = 'open'",
+        (product_id,)
+    )
     db.commit()
     flash('상품을 차단했습니다.')
     return redirect(url_for('admin_dashboard'))
@@ -812,9 +985,25 @@ def admin_block_product(product_id):
 @admin_required
 def admin_unblock_product(product_id):
     db = get_db()
-    db.execute("UPDATE product SET status = 'active' WHERE id = ?", (product_id,))
+    db.execute("UPDATE product SET status = 'active', flagged = 0 WHERE id = ?", (product_id,))
     db.commit()
     flash('상품 차단을 해제했습니다.')
+    return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/product/<product_id>/dismiss', methods=['POST'])
+@admin_required
+def admin_dismiss_product_reports(product_id):
+    # [checklist: 신고 남용 방지] 관리자 반려 -> 차단하지 않고 검토 큐에서 제거, 신고 처리완료
+    db = get_db()
+    db.execute("UPDATE product SET flagged = 0 WHERE id = ?", (product_id,))
+    db.execute(
+        "UPDATE report SET status = 'resolved' WHERE target_type = 'product' AND target_id = ? "
+        "AND status = 'open'",
+        (product_id,)
+    )
+    db.commit()
+    flash('해당 상품에 대한 신고를 반려했습니다.')
     return redirect(url_for('admin_dashboard'))
 
 

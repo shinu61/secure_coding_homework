@@ -3,6 +3,69 @@
 {% block content %}
 <h2>관리자 대시보드</h2>
 
+<h3>신고 검토 큐 (상품 {{ review_products|length }} · 사용자 {{ review_users|length }})</h3>
+<p><small class="muted">신고 누적(가중 점수 ≥ {{ report_threshold }})으로 검토 대기 중인 대상입니다.
+자동 차단되지 않으며, 아래에서 <strong>승인</strong>해야 실제 차단/휴면이 확정됩니다.
+신규 계정의 신고는 가중치가 낮아 담합(Sybil) 영향이 줄어듭니다.</small></p>
+
+<h4>상품 검토 대기</h4>
+<table>
+  <tr><th>제목</th><th>가중점수</th><th>신고자(계정나이/가중치)</th><th></th></tr>
+  {% for item in review_products %}
+    <tr>
+      <td><a href="{{ url_for('view_product', product_id=item.p.id) }}">{{ item.p.title }}</a></td>
+      <td>{{ "%.1f"|format(item.score) }}</td>
+      <td>
+        {% for r in item.reports %}
+          <div><small>{{ r.username }} · {{ "%.1f"|format(r.age_days) }}일 · x{{ r.weight }}<br>
+            <span class="muted">사유: {{ r.reason }}</span></small></div>
+        {% endfor %}
+      </td>
+      <td class="row">
+        <form method="post" action="{{ url_for('admin_block_product', product_id=item.p.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="danger" style="width:auto;">차단 승인</button>
+        </form>
+        <form method="post" action="{{ url_for('admin_dismiss_product_reports', product_id=item.p.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="secondary" style="width:auto;">반려</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4"><small class="muted">검토 대기 상품이 없습니다.</small></td></tr>
+  {% endfor %}
+</table>
+
+<h4>사용자 검토 대기</h4>
+<table>
+  <tr><th>사용자명</th><th>가중점수</th><th>신고자(계정나이/가중치)</th><th></th></tr>
+  {% for item in review_users %}
+    <tr>
+      <td>{{ item.u.username }}</td>
+      <td>{{ "%.1f"|format(item.score) }}</td>
+      <td>
+        {% for r in item.reports %}
+          <div><small>{{ r.username }} · {{ "%.1f"|format(r.age_days) }}일 · x{{ r.weight }}<br>
+            <span class="muted">사유: {{ r.reason }}</span></small></div>
+        {% endfor %}
+      </td>
+      <td class="row">
+        <form method="post" action="{{ url_for('admin_suspend_user', user_id=item.u.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="danger" style="width:auto;">휴면 승인</button>
+        </form>
+        <form method="post" action="{{ url_for('admin_dismiss_user_reports', user_id=item.u.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="secondary" style="width:auto;">반려</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4"><small class="muted">검토 대기 사용자가 없습니다.</small></td></tr>
+  {% endfor %}
+</table>
+
 <h3>미처리 신고 ({{ reports|length }})</h3>
 <table>
   <tr><th>대상유형</th><th>대상ID</th><th>사유</th><th>일시</th><th></th></tr>
