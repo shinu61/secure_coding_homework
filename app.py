@@ -39,6 +39,9 @@ LOCK_MINUTES = 5
 # 신고 남용 방지 설정 [checklist: 신고 남용 방지]
 REPORT_THRESHOLD = 3  # 이 횟수 이상 신고되면 자동 차단/휴면 처리
 
+# 송금 상한 [checklist: 폼 입력 검증] 비정상적으로 큰 값/정수 오버플로 방지
+MAX_TRANSFER_AMOUNT = 100_000_000
+
 USERNAME_RE = re.compile(r'^[A-Za-z0-9_]{3,20}$')
 
 
@@ -48,9 +51,14 @@ USERNAME_RE = re.compile(r'^[A-Za-z0-9_]{3,20}$')
 def get_db():
     db = getattr(g, '_database', None)
     if db is None:
-        db = g._database = sqlite3.connect(DATABASE)
+        # isolation_level=None -> autocommit 모드. 트랜잭션 경계를 코드에서 명시적으로
+        # 제어(BEGIN IMMEDIATE/COMMIT/ROLLBACK)하기 위함. [checklist: 데이터 무결성]
+        db = g._database = sqlite3.connect(DATABASE, isolation_level=None)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys = ON")
+        # 동시 쓰기 시 잠금 대기(기본 0 -> 즉시 실패 방지). 경쟁 조건 하에서
+        # 뒤늦은 트랜잭션이 최대 5초까지 락을 기다렸다가 순차 처리되도록 함.
+        db.execute("PRAGMA busy_timeout = 5000")
     return db
 
 
@@ -581,10 +589,14 @@ def transfer():
         to_username = request.form.get('to_username', '').strip()
         amount_raw = request.form.get('amount', '').strip()
 
+        # [checklist: 폼 입력 검증] 숫자/범위 검증 (상한 포함)
         if not amount_raw.isdigit() or int(amount_raw) <= 0:
             flash('송금액은 1 이상의 숫자여야 합니다.')
             return redirect(url_for('transfer'))
         amount = int(amount_raw)
+        if amount > MAX_TRANSFER_AMOUNT:
+            flash(f'송금액은 최대 {MAX_TRANSFER_AMOUNT:,}원까지 가능합니다.')
+            return redirect(url_for('transfer'))
 
         receiver = db.execute(
             "SELECT * FROM user WHERE username = ?", (to_username,)
@@ -595,19 +607,36 @@ def transfer():
         if receiver['id'] == user['id']:
             flash('본인에게는 송금할 수 없습니다.')
             return redirect(url_for('transfer'))
-        if user['balance'] < amount:
-            flash('잔액이 부족합니다.')
-            return redirect(url_for('transfer'))
 
-        # 잔액 검증 후 원자적으로 차감/증가 (간단한 트랜잭션)
-        db.execute("UPDATE user SET balance = balance - ? WHERE id = ?", (amount, user['id']))
-        db.execute("UPDATE user SET balance = balance + ? WHERE id = ?", (amount, receiver['id']))
-        db.execute(
-            "INSERT INTO transfer (id, sender_id, receiver_id, amount, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), user['id'], receiver['id'], amount, now())
-        )
-        db.commit()
+        # [checklist: 데이터 무결성] 경쟁 조건(TOCTOU)으로 인한 이중지불 방지.
+        # 잔액 검사를 UPDATE의 WHERE 절에 포함시켜 DB가 원자적으로 판단하게 하고,
+        # 차감/증가/기록을 BEGIN IMMEDIATE 트랜잭션으로 묶어 중간 실패 시 전체 롤백.
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            cur = db.execute(
+                "UPDATE user SET balance = balance - ? WHERE id = ? AND balance >= ?",
+                (amount, user['id'], amount)
+            )
+            if cur.rowcount == 0:
+                # 조건 불충족(잔액 부족) -> 차감 자체가 발생하지 않음
+                db.execute("ROLLBACK")
+                flash('잔액이 부족합니다.')
+                return redirect(url_for('transfer'))
+
+            db.execute(
+                "UPDATE user SET balance = balance + ? WHERE id = ?",
+                (amount, receiver['id'])
+            )
+            db.execute(
+                "INSERT INTO transfer (id, sender_id, receiver_id, amount, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), user['id'], receiver['id'], amount, now())
+            )
+            db.execute("COMMIT")
+        except Exception:
+            db.execute("ROLLBACK")
+            raise
+
         flash(f'{to_username}님에게 {amount}원을 송금했습니다.')
         return redirect(url_for('transfer'))
 
