@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}로그인{% endblock %}
+{% block content %}
+<h2>로그인</h2>
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  사용자명: <input type="text" name="username" required maxlength="20"><br>
+  비밀번호: <input type="password" name="password" required maxlength="64"><br>
+  <button type="submit">로그인</button>
+</form>
+<p><small class="muted">관리자 계정은 서버 콘솔 로그(최초 실행 시 출력)에서 초기 비밀번호를 확인하세요.</small></p>
+{% endblock %}

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Tiny Market{% endblock %}</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+  <script src="{{ url_for('static', filename='js/confirm.js') }}" defer></script>
+  <style>
+    body {
+      background-color: #F7F7F7;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0; padding: 0; color: #333;
+    }
+    nav { background-color: #fff; padding: 16px 20px; border-bottom: 1px solid #e0e0e0;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+    nav a { text-decoration: none; color: #555; margin-right: 14px; font-weight: 500; font-size: 14px; }
+    nav a.admin-link { color: #D32F2F; }
+    nav .balance { margin-left: auto; font-size: 13px; color: #888; }
+    .container { max-width: 800px; margin: 40px auto; background-color: #fff; padding: 40px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-radius: 8px; }
+    h1, h2, h3 { font-weight: 600; margin-bottom: 20px; }
+    input, textarea, button, select { width: 100%; padding: 10px; margin-bottom: 16px;
+      border: 1px solid #e0e0e0; border-radius: 4px; font-size: 15px; box-sizing: border-box; }
+    button { background-color: #007AFF; color: #fff; border: none; cursor: pointer;
+      transition: background-color 0.2s; width: auto; padding: 10px 20px; }
+    button:hover { background-color: #005BB5; }
+    button.danger { background-color: #D32F2F; }
+    button.secondary { background-color: #888; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 10px; border-bottom: 1px solid #e0e0e0; }
+    .flash { background-color: #FFECB3; padding: 10px; border: 1px solid #FFB74D; border-radius: 4px; margin-bottom: 10px; }
+    .row { display: flex; gap: 10px; align-items: center; }
+    .row form { margin: 0; }
+    .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 6px; }
+    .tag.blocked { background: #FFCDD2; color: #B71C1C; }
+    .tag.suspended { background: #FFCDD2; color: #B71C1C; }
+    .tag.admin { background: #FFE0B2; color: #E65100; }
+    small.muted { color: #999; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; font-size: 14px; }
+    #chat { margin-top: 20px; }
+    #messages { height: 260px; overflow-y: auto; border: 1px solid #e0e0e0; padding: 10px;
+      border-radius: 4px; margin-bottom: 10px; background-color: #fafafa; }
+    #messages li { border: none; padding: 4px 0; }
+  </style>
+</head>
+<body>
+  <nav>
+    {% if session.get('user_id') %}
+      <a href="{{ url_for('dashboard') }}">대시보드</a>
+      <a href="{{ url_for('chat_general') }}">전체채팅</a>
+      <a href="{{ url_for('transfer') }}">송금</a>
+      <a href="{{ url_for('profile') }}">프로필</a>
+      <a href="{{ url_for('report') }}">신고하기</a>
+      {% if nav_user and nav_user['role'] == 'admin' %}
+        <a class="admin-link" href="{{ url_for('admin_dashboard') }}">관리자</a>
+      {% endif %}
+      <a href="{{ url_for('logout') }}">로그아웃</a>
+    {% else %}
+      <a href="{{ url_for('login') }}">로그인</a>
+      <a href="{{ url_for('register') }}">회원가입</a>
+    {% endif %}
+  </nav>
+  <div class="container">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <ul>
+          {% for message in messages %}
+            <li class="flash">{{ message }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}신고하기{% endblock %}
+{% block content %}
+<h2>신고하기</h2>
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  신고 대상 유형:
+  <select name="target_type">
+    <option value="product" {% if request.args.get('target_type') == 'product' %}selected{% endif %}>상품</option>
+    <option value="user" {% if request.args.get('target_type') == 'user' %}selected{% endif %}>사용자</option>
+  </select>
+  신고 대상 ID: <input type="text" name="target_id" value="{{ request.args.get('target_id', '') }}" required><br>
+  <small class="muted">상품 상세 페이지 또는 프로필 URL 끝에 있는 ID를 입력하세요.</small>
+  신고 사유 (1~500자): <br>
+  <textarea name="reason" rows="4" maxlength="500" required></textarea><br>
+  <button type="submit">신고 접수</button>
+</form>
+<p><small class="muted">동일 대상은 1회만 신고할 수 있으며, 누적 {{ 3 }}회 이상 신고되면 자동으로 차단/휴면 처리됩니다.</small></p>
+{% endblock %}

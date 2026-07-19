@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}프로필{% endblock %}
+{% block content %}
+<h2>프로필 관리</h2>
+<p>
+  사용자명: {{ user.username }}
+  {% if user.role == 'admin' %}<span class="tag admin">관리자</span>{% endif %}
+</p>
+<p>잔액: {{ "{:,}".format(user.balance) }}원 (<a href="{{ url_for('transfer') }}">송금 내역 보기</a>)</p>
+
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  소개글: <br>
+  <textarea name="bio" rows="4" maxlength="500">{{ user.bio or '' }}</textarea><br>
+  <button type="submit">프로필 업데이트</button>
+</form>
+
+<h3>비밀번호 변경</h3>
+<form method="post" action="{{ url_for('change_password') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  현재 비밀번호: <input type="password" name="current_password" required maxlength="64"><br>
+  새 비밀번호 (8~64자): <input type="password" name="new_password" required maxlength="64"><br>
+  <button type="submit">비밀번호 변경</button>
+</form>
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}관리자{% endblock %}
+{% block content %}
+<h2>관리자 대시보드</h2>
+
+<h3>미처리 신고 ({{ reports|length }})</h3>
+<table>
+  <tr><th>대상유형</th><th>대상ID</th><th>사유</th><th>일시</th><th></th></tr>
+  {% for r in reports %}
+    <tr>
+      <td>{{ r.target_type }}</td>
+      <td><small>{{ r.target_id }}</small></td>
+      <td>{{ r.reason }}</td>
+      <td>{{ r.created_at[:19] }}</td>
+      <td>
+        <form method="post" action="{{ url_for('admin_resolve_report', report_id=r.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" style="width:auto;">처리완료</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5"><small class="muted">미처리 신고가 없습니다.</small></td></tr>
+  {% endfor %}
+</table>
+
+<h3>사용자 관리 ({{ users|length }})</h3>
+<table>
+  <tr><th>사용자명</th><th>역할</th><th>상태</th><th>잔액</th><th></th></tr>
+  {% for u in users %}
+    <tr>
+      <td>{{ u.username }}</td>
+      <td>{{ u.role }}</td>
+      <td>{{ u.status }}{% if u.status == 'suspended' %}<span class="tag suspended">휴면</span>{% endif %}</td>
+      <td>{{ "{:,}".format(u.balance) }}</td>
+      <td>
+        {% if u.role != 'admin' %}
+          {% if u.status == 'active' %}
+            <form method="post" action="{{ url_for('admin_suspend_user', user_id=u.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="danger" style="width:auto;">휴면 처리</button>
+            </form>
+          {% else %}
+            <form method="post" action="{{ url_for('admin_unsuspend_user', user_id=u.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" style="width:auto;">휴면 해제</button>
+            </form>
+          {% endif %}
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+</table>
+
+<h3>상품 관리 ({{ products|length }})</h3>
+<table>
+  <tr><th>제목</th><th>가격</th><th>상태</th><th>신고수</th><th></th></tr>
+  {% for p in products %}
+    <tr>
+      <td><a href="{{ url_for('view_product', product_id=p.id) }}">{{ p.title }}</a></td>
+      <td>{{ "{:,}".format(p.price) }}</td>
+      <td>{{ p.status }}{% if p.status == 'blocked' %}<span class="tag blocked">차단</span>{% endif %}</td>
+      <td>{{ p.report_count }}</td>
+      <td class="row">
+        {% if p.status == 'active' %}
+          <form method="post" action="{{ url_for('admin_block_product', product_id=p.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="danger" style="width:auto;">차단</button>
+          </form>
+        {% else %}
+          <form method="post" action="{{ url_for('admin_unblock_product', product_id=p.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" style="width:auto;">차단해제</button>
+          </form>
+        {% endif %}
+        <form method="post" action="{{ url_for('admin_delete_product', product_id=p.id) }}"
+              data-confirm="삭제하시겠습니까?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="danger" style="width:auto;">삭제</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+</table>
+{% endblock %}

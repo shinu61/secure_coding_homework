@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}채팅{% endblock %}
+{% block content %}
+{% if peer %}
+  <h2>{{ peer.username }}님과의 채팅</h2>
+{% else %}
+  <h2>전체 채팅</h2>
+{% endif %}
+
+<div id="chat" data-room="{{ room }}">
+  <ul id="messages">
+    {% for m in history %}
+      <li><strong>{{ m.username }}:</strong> {{ m.content }}</li>
+    {% endfor %}
+  </ul>
+  <div class="row">
+    <input id="chat_input" type="text" maxlength="500" placeholder="메시지를 입력하세요">
+    <button id="chat_send" type="button" style="width:auto;">전송</button>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+{% endblock %}
