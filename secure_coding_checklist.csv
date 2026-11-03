@@ -1,31 +1,31 @@
 Section,Checklist Item,Description,구현여부,코드 위치 / 조치 내용
 회원가입 및 프로필 관리,서버측 입력 검증,"사용자명(username)와 비밀번호(password)에 대해 길이, 허용 문자 집합, 형식 등 서버측 검증 수행. XSS 공격 방지를 위해 입력값 필터링 및 인코딩 적용 여부 확인",완료,"app.py register(): USERNAME_RE(영문/숫자/밑줄 3~20자), 비밀번호 8~64자 검증. Jinja2 자동 이스케이프로 XSS 방지"
-,CSRF 보호,"회원가입, 로그인, 프로필 수정 등 모든 폼에 대해 CSRF 토큰 사용 여부를 확인하여 요청 위조 공격 방지",완료,"Flask-WTF CSRFProtect(app) 전역 적용 + 모든 POST form에 csrf_token 히든 필드 추가"
-,비밀번호 보안,"비밀번호를 평문으로 저장하지 않고 bcrypt, Argon2 등 강력한 해시 알고리즘과 고유 salt를 적용하여 암호화 저장하는지 확인",완료,"werkzeug.security.generate_password_hash/check_password_hash 사용 (salt 포함 pbkdf2:sha256). 스타터 코드의 평문 저장 취약점 수정"
-,세션 쿠키 설정,"세션 쿠키에 HttpOnly 및 HTTPS 환경에서 Secure 플래그가 적용되어 있는지 확인",완료,"app.config: SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE(환경변수 COOKIE_SECURE로 운영時 true)"
-,세션 만료 및 재인증,"일정 시간 이후 세션 만료 및 민감 작업 시 재인증 로직이 구현되어 있는지 확인",완료,"PERMANENT_SESSION_LIFETIME=30분 + session.permanent=True. 비밀번호 변경 시 change_password()에서 현재 비밀번호 재확인"
-,실패 로그인 방어,"로그인 실패 횟수에 따른 계정 잠금 혹은 지연(time-out) 메커니즘 적용 여부 확인",완료,"login(): failed_attempts 5회 이상 시 locked_until 5분 설정, 잠금 중 로그인 차단"
+,CSRF 보호,"회원가입, 로그인, 프로필 수정 등 모든 폼에 대해 CSRF 토큰 사용 여부를 확인하여 요청 위조 공격 방지",완료,Flask-WTF CSRFProtect(app) 전역 적용 + 모든 POST form에 csrf_token 히든 필드 추가
+,비밀번호 보안,"비밀번호를 평문으로 저장하지 않고 bcrypt, Argon2 등 강력한 해시 알고리즘과 고유 salt를 적용하여 암호화 저장하는지 확인",완료,werkzeug.security.generate_password_hash/check_password_hash 사용 (salt 포함 pbkdf2:sha256). 스타터 코드의 평문 저장 취약점 수정
+,세션 쿠키 설정,세션 쿠키에 HttpOnly 및 HTTPS 환경에서 Secure 플래그가 적용되어 있는지 확인,완료,"app.config: SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE(환경변수 COOKIE_SECURE로 운영時 true)"
+,세션 만료 및 재인증,일정 시간 이후 세션 만료 및 민감 작업 시 재인증 로직이 구현되어 있는지 확인,완료,PERMANENT_SESSION_LIFETIME=30분 + session.permanent=True. 비밀번호 변경 시 change_password()에서 현재 비밀번호 재확인
+,실패 로그인 방어,로그인 실패 횟수에 따른 계정 잠금 혹은 지연(time-out) 메커니즘 적용 여부 확인,완료,"login(): failed_attempts 5회 이상 시 locked_until 5분 설정, 잠금 중 로그인 차단"
 ,오류 메시지,"오류 발생 시 내부 정보(스택 트레이스, DB 정보 등)가 노출되지 않도록 처리되어 있는지 확인",완료,"로그인 실패 시 아이디/비밀번호 구분 없는 통합 메시지. errorhandler(500)에서 app.logger.exception으로 서버에만 기록, 사용자에게는 일반 메시지만 노출. FLASK_DEBUG=false 기본값"
 상품 등록 및 관리,폼 입력 검증,"상품 제목, 설명, 가격 등의 입력 필드에 대해 서버측 검증 및 필수 항목 체크 여부 확인. 가격은 숫자 형식 및 범위 검증 적용",완료,"validate_product_form(): 제목 1~100자, 설명 1~1000자, 가격 0~100,000,000 정수 검증"
-,XSS 방어,"사용자 입력(상품 설명 등)에 대해 HTML 태그 및 스크립트 코드 이스케이프 또는 필터링 적용 여부 확인",완료,"모든 템플릿에서 Jinja2 auto-escape 사용, |safe 필터 미사용"
-,인증된 사용자만 등록,"상품 등록, 수정, 삭제 기능이 로그인한 사용자에게만 허용되도록 접근 제어가 구현되어 있는지 확인",완료,"@login_required 데코레이터를 new_product/edit_product/delete_product에 적용"
-,소유자 확인,"상품 수정 및 삭제 시, 요청한 사용자가 해당 상품의 소유자인지 검증하는 로직이 구현되어 있는지 확인",완료,"edit_product/delete_product에서 product.seller_id != user.id and user.role != 'admin' 이면 403"
-,데이터 무결성,"데이터베이스에 저장되기 전 모든 필수 항목 및 형식이 올바른지 검증하는 로직이 있는지 확인",완료,"validate_product_form()에서 통과한 값만 INSERT/UPDATE 수행"
-실시간 채팅 및 메시징,메시지 내용 검증,"채팅 메시지에 대해 길이 제한, 허용 문자 집합, XSS 이스케이프 처리 여부 등 서버측 검증 수행 여부 확인",완료,"handle_send_message_event(): content를 MAX_MESSAGE_LEN(500자)로 자르고 strip. 클라이언트는 textContent/createTextNode로 렌더링해 DOM XSS 방지"
-,사용자 인증,"Socket 연결 시 사용자가 인증된 상태인지 확인하는 로직(예: 로그인 상태 확인)이 적용되어 있는지 확인",완료,"@socketio.on('connect')에서 session에 user_id 없으면 연결 거부(return False)"
-,메시지 검증,"클라이언트에서 수신한 메시지 데이터의 형식 및 내용에 대해 서버측 검증 로직이 존재하는지 확인",완료,"handle_send_message_event()에서 room/room 형식(dm: 접두사) 및 발신자가 대화 당사자인지 검증"
-,Rate Limiting,"동일 사용자가 단기간에 과도한 메시지를 보내지 않도록 제한하는 기능(스팸 방지)이 구현되어 있는지 확인",완료,"_last_message_time 딕셔너리로 사용자별 MIN_MESSAGE_INTERVAL(0.5초) 미만 재전송 차단"
-,연결 암호화,"운영 환경에서 WSS(SSL/TLS 암호화된 웹소켓)를 사용하여 데이터 전송의 기밀성이 보장되는지 확인",문서화(운영시 필요),"로컬 개발 환경 특성상 자체 구현 불가. README에 운영 배포 시 리버스 프록시(nginx 등) + TLS 종단으로 WSS 적용 권장 명시"
+,XSS 방어,사용자 입력(상품 설명 등)에 대해 HTML 태그 및 스크립트 코드 이스케이프 또는 필터링 적용 여부 확인,완료,"모든 템플릿에서 Jinja2 auto-escape 사용, |safe 필터 미사용"
+,인증된 사용자만 등록,"상품 등록, 수정, 삭제 기능이 로그인한 사용자에게만 허용되도록 접근 제어가 구현되어 있는지 확인",완료,@login_required 데코레이터를 new_product/edit_product/delete_product에 적용
+,소유자 확인,"상품 수정 및 삭제 시, 요청한 사용자가 해당 상품의 소유자인지 검증하는 로직이 구현되어 있는지 확인",완료,edit_product/delete_product에서 product.seller_id != user.id and user.role != 'admin' 이면 403
+,데이터 무결성,데이터베이스에 저장되기 전 모든 필수 항목 및 형식이 올바른지 검증하는 로직이 있는지 확인,완료,validate_product_form()에서 통과한 값만 INSERT/UPDATE 수행
+실시간 채팅 및 메시징,메시지 내용 검증,"채팅 메시지에 대해 길이 제한, 허용 문자 집합, XSS 이스케이프 처리 여부 등 서버측 검증 수행 여부 확인",완료,handle_send_message_event(): content를 MAX_MESSAGE_LEN(500자)로 자르고 strip. 클라이언트는 textContent/createTextNode로 렌더링해 DOM XSS 방지
+,사용자 인증,Socket 연결 시 사용자가 인증된 상태인지 확인하는 로직(예: 로그인 상태 확인)이 적용되어 있는지 확인,완료,@socketio.on('connect')에서 session에 user_id 없으면 연결 거부(return False)
+,메시지 검증,클라이언트에서 수신한 메시지 데이터의 형식 및 내용에 대해 서버측 검증 로직이 존재하는지 확인,완료,handle_send_message_event()에서 room/room 형식(dm: 접두사) 및 발신자가 대화 당사자인지 검증
+,Rate Limiting,동일 사용자가 단기간에 과도한 메시지를 보내지 않도록 제한하는 기능(스팸 방지)이 구현되어 있는지 확인,완료,_last_message_time 딕셔너리로 사용자별 MIN_MESSAGE_INTERVAL(0.5초) 미만 재전송 차단
+,연결 암호화,운영 환경에서 WSS(SSL/TLS 암호화된 웹소켓)를 사용하여 데이터 전송의 기밀성이 보장되는지 확인,문서화(운영시 필요),로컬 개발 환경 특성상 자체 구현 불가. README에 운영 배포 시 리버스 프록시(nginx 등) + TLS 종단으로 WSS 적용 권장 명시
 안전 거래 및 신고,폼 입력 검증,"신고 대상(target_id) 및 신고 사유(reason)에 대해 서버측 입력 검증, 길이 제한, XSS 방어 적용 여부 확인",완료,"report(): target_type in ('user','product') 검증, reason 1~500자 검증, 대상 존재 여부 확인"
-,인증된 사용자 접근,"신고 기능은 반드시 로그인한 사용자만 접근 가능하도록 제어되어 있는지 확인",완료,"@login_required 데코레이터 적용"
+,인증된 사용자 접근,신고 기능은 반드시 로그인한 사용자만 접근 가능하도록 제어되어 있는지 확인,완료,@login_required 데코레이터 적용
 ,데이터 무결성 및 로그 관리,"신고 접수 시 올바른 형식의 데이터가 저장되고, 신고 활동이 감사 로그로 기록되는지 확인",완료,"report 테이블에 created_at 타임스탬프 기록, 관리자 페이지에서 미처리 신고 목록으로 감사 가능"
-,송금 경쟁 조건 방지,"동시 송금 요청 시 잔액을 읽고-비교-차감하는 과정의 경쟁 조건(TOCTOU)으로 이중지불이 발생하지 않도록 원자적 처리가 되어 있는지 확인",완료,"transfer(): 잔액 검사를 UPDATE ... WHERE id=? AND balance>=? 원자적 조건으로 처리(rowcount==0이면 잔액부족), 차감/증가/기록을 BEGIN IMMEDIATE 트랜잭션으로 묶어 전부 성공 또는 전체 롤백. 송금액 상한(1억) 검증 추가. 20개 동시요청 시뮬레이션에서 정확히 1건만 성공 확인"
+,송금 경쟁 조건 방지,동시 송금 요청 시 잔액을 읽고-비교-차감하는 과정의 경쟁 조건(TOCTOU)으로 이중지불이 발생하지 않도록 원자적 처리가 되어 있는지 확인,완료,"transfer(): 잔액 검사를 UPDATE ... WHERE id=? AND balance>=? 원자적 조건으로 처리(rowcount==0이면 잔액부족), 차감/증가/기록을 BEGIN IMMEDIATE 트랜잭션으로 묶어 전부 성공 또는 전체 롤백. 송금액 상한(1억) 검증 추가. 20개 동시요청 시뮬레이션에서 정확히 1건만 성공 확인"
 ,신고 남용 방지,"동일 사용자의 반복 신고 제한, 신고 건수 제한 및 관리자 검토 프로세스 등 신고 기능 남용 방지 로직이 구현되어 있는지 확인",완료,"UNIQUE(reporter_id, target_type, target_id) 제약으로 중복 신고 차단. 자기 자신(본인 계정/본인 상품) 신고 차단. 신고 누적 시 즉시 자동 차단하지 않고 관리자 검토 큐(flagged)에만 등록, 관리자 승인(admin_block_product/admin_suspend_user)에서만 차단/휴면 확정, 반려(admin_dismiss_*) 가능"
-,신고 담합(Sybil) 방어,"소수의 가짜 계정 담합으로 정상 사용자·상품을 즉시 차단시키는 공격을 방어하는지 확인",완료,"report(): 누적 신고를 즉시 확정하지 않고 pending(flagged) 상태로만 두어 관리자 승인 전에는 차단되지 않음. 신고자 계정 나이 가중치(reporter_weight: 24h 미만 신규계정 0.5, 이상 1.0)로 가중 점수(weighted_report_score)가 임계치(3.0) 이상일 때만 검토 큐 등록 -> 갓 만든 계정 3개 담합(가중 1.5)으로는 검토 큐 진입 자체가 불가. test_sybil_ratelimit.py로 검증"
-,엔드포인트 속도 제한,"로그인/회원가입/송금/신고 등 민감 엔드포인트에 요청 속도 제한을 적용해 무차별 대입·스팸·자동화 남용을 방지하는지 확인",완료,"Flask-Limiter(IP 기준) 적용: POST /login 10/분(계정 잠금과 별개), /register 10/분, /transfer 30/분, /report 20/분. 한도 초과 시 errorhandler(429)로 사용자 친화 메시지 반환. RATELIMIT_ENABLED 환경변수로 제어. test_sybil_ratelimit.py로 429 검증"
-전체 시스템,ORM 및 파라미터 바인딩,"SQLAlchemy ORM 및 파라미터 바인딩을 통해 SQL 인젝션 공격에 대한 방어가 제대로 이루어지고 있는지 확인",완료,"전체 쿼리에서 sqlite3 파라미터 바인딩(?) 사용, 문자열 결합 미사용 (검색 LIKE 절 포함)"
-,데이터베이스 권한,"데이터베이스 사용자 권한이 최소 권한 원칙에 따라 설정되어 민감 데이터 접근이 제한되어 있는지 확인",문서화(운영시 필요),"개발 환경은 SQLite 단일 파일 특성상 별도 DB 계정 권한 분리가 없음. README에 운영 배포 시 별도 DB 서버 + 최소 권한 계정 사용 권장 명시"
+,신고 담합(Sybil) 방어,소수의 가짜 계정 담합으로 정상 사용자·상품을 즉시 차단시키는 공격을 방어하는지 확인,완료,"report(): 누적 신고를 즉시 확정하지 않고 pending(flagged) 상태로만 두어 관리자 승인 전에는 차단되지 않음. 신고자 계정 나이 가중치(reporter_weight: 24h 미만 신규계정 0.5, 이상 1.0)로 가중 점수(weighted_report_score)가 임계치(3.0) 이상일 때만 검토 큐 등록 -> 갓 만든 계정 3개 담합(가중 1.5)으로는 검토 큐 진입 자체가 불가. test_sybil_ratelimit.py로 검증"
+,엔드포인트 속도 제한,로그인/회원가입/송금/신고 등 민감 엔드포인트에 요청 속도 제한을 적용해 무차별 대입·스팸·자동화 남용을 방지하는지 확인,완료,"Flask-Limiter(IP 기준) 적용: POST /login 10/분(계정 잠금과 별개), /register 10/분, /transfer 30/분, /report 20/분. 한도 초과 시 errorhandler(429)로 사용자 친화 메시지 반환. RATELIMIT_ENABLED 환경변수로 제어. test_sybil_ratelimit.py로 429 검증"
+전체 시스템,ORM 및 파라미터 바인딩,SQLAlchemy ORM 및 파라미터 바인딩을 통해 SQL 인젝션 공격에 대한 방어가 제대로 이루어지고 있는지 확인,완료,"전체 쿼리에서 sqlite3 파라미터 바인딩(?) 사용, 문자열 결합 미사용 (검색 LIKE 절 포함)"
+,데이터베이스 권한,데이터베이스 사용자 권한이 최소 권한 원칙에 따라 설정되어 민감 데이터 접근이 제한되어 있는지 확인,문서화(운영시 필요),개발 환경은 SQLite 단일 파일 특성상 별도 DB 계정 권한 분리가 없음. README에 운영 배포 시 별도 DB 서버 + 최소 권한 계정 사용 권장 명시
 ,보안 헤더 설정,"Content-Security-Policy, X-Frame-Options, X-Content-Type-Options 등의 보안 헤더가 적용되어 있는지 확인",완료,"@app.after_request set_security_headers()에서 CSP, X-Frame-Options: DENY, X-Content-Type-Options: nosniff, Referrer-Policy 적용"
-,HTTPS 적용,"운영 환경에서 HTTPS를 사용하여 데이터 전송 시 기밀성 및 무결성이 보장되는지 확인",문서화(운영시 필요),"로컬 테스트는 HTTP. README에 ngrok 또는 리버스 프록시로 HTTPS 적용 방법 및 COOKIE_SECURE=true 설정 안내"
+,HTTPS 적용,운영 환경에서 HTTPS를 사용하여 데이터 전송 시 기밀성 및 무결성이 보장되는지 확인,문서화(운영시 필요),로컬 테스트는 HTTP. README에 ngrok 또는 리버스 프록시로 HTTPS 적용 방법 및 COOKIE_SECURE=true 설정 안내
 ,에러 및 예외 처리,"예외 처리 시 민감 정보가 사용자에게 노출되지 않고, 에러 로그에 민감 정보 기록 방지 로직이 구현되어 있는지 확인",완료,"errorhandler(403/404/500) 커스텀 페이지, FLASK_DEBUG=false 기본값으로 스택트레이스 비노출"
-,라이브러리 및 의존성 관리,"사용 중인 Flask, SQLAlchemy, Flask-SocketIO 등 라이브러리의 최신 보안 패치 및 업데이트가 적용되어 있는지 정기적으로 점검",완료,"requirements.txt에 버전 고정(Flask 3.1.3 등 2026년 7월 기준 최신 안정 버전). pip list --outdated로 주기적 점검 필요성 README에 명시"
+,라이브러리 및 의존성 관리,"사용 중인 Flask, SQLAlchemy, Flask-SocketIO 등 라이브러리의 최신 보안 패치 및 업데이트가 적용되어 있는지 정기적으로 점검",완료,requirements.txt에 버전 고정. GitHub Actions(.github/workflows/tests.yml)에서 푸시마다 pip-audit로 알려진 취약점 자동 검사. 2026-11 검사에서 Werkzeug 3.1.7의 PYSEC-2026-4312 발견 → 3.1.9로 업그레이드

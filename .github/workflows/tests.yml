@@ -1,0 +1,35 @@
+name: security-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt requests websocket-client pip-audit
+
+      - name: Run end-to-end security tests
+        run: bash scripts/run_tests.sh
+
+      - name: Audit dependencies for known vulnerabilities
+        run: pip-audit -r requirements.txt
+
+      - name: Server log on failure
+        if: failure()
+        run: cat server.log || true
