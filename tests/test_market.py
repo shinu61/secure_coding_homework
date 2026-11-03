@@ -349,14 +349,16 @@ try:
     check("chat username from server session",
           any(d.get("username") == U["alice"] for d in received if isinstance(d, dict)))
 
-    # rate limit: two messages within 0.5s -> second dropped
+    # rate limit: two messages within 0.5s -> only one delivered.
+    # 서버가 두 이벤트를 동시에 처리하면 도착 순서가 바뀔 수 있으므로
+    # "어느 쪽이든 정확히 하나만 전달"을 확인한다.
     received.clear()
     c1.emit("send_message", {"room": "general", "message": "msg1"})
     c1.emit("send_message", {"room": "general", "message": "msg2"})
     time.sleep(1.5)
-    texts = [d.get("message") for d in received if isinstance(d, dict)]
-    check("chat rate limit drops rapid 2nd msg", "msg1" in texts and "msg2" not in texts,
-          str(texts))
+    texts = [d.get("message") for d in received
+             if isinstance(d, dict) and d.get("message") in ("msg1", "msg2")]
+    check("chat rate limit drops rapid 2nd msg", len(texts) == 1, str(texts))
 
     c1.disconnect(); c2.disconnect()
 
